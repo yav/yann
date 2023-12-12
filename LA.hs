@@ -2,7 +2,7 @@
 module LA
   ( Vector, pointwise, (.*)
   , indexed
-  , push, peek, pop, empty, mapTail
+  , push, pop, empty
   , Matrix, transpose, mMap, mPointwise
   , type (+)
   , module Scalar
@@ -26,12 +26,6 @@ empty = Vector []
 
 push :: a -> Vector n a -> Vector (1 + n) a
 push x (Vector xs) = Vector (x : xs)
-
-peek :: Vector (1 + n) a -> a
-peek (Vector xs) = head xs
-
-mapTail :: (a -> a) -> Vector (n + 1) a -> Vector (n + 1) a
-mapTail f (Vector xs) = Vector (head xs : map f (tail xs))
 
 pop :: Vector (1 + n) a -> Vector n a
 pop (Vector xs) = Vector (tail xs)

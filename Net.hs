@@ -3,12 +3,14 @@ import LA
 import Act
 
 type V n                  = Vector n Scalar
-type IGradient size       = V size
-type WGradient size       = V (1 + size)
-type Neuron inputs        = V (1 + inputs)
+type IGradient n          = V n             -- ^ Error change wrt. input
+type WGradient n          = V (1 + n)       -- ^ Error change wrt. weight
+type Neuron n             = V (1 + n)       -- ^ Weights of a neuron
 
+-- | Various normalization (aka. activation) functions.
 data Norm = Sigmoid | Softmax | ReLU
 
+-- | General topology of a neural net.
 data NetTopology layer inputs hidden outputs where
   (:>)    :: layer inputs size ->
              NetTopology layer size hidden outputs ->
@@ -34,15 +36,15 @@ type NetG = NetTopology GLayer
 --------------------------------------------------------------------------------
 -- Evaluation
 
--- Linear part of a neuron.
+-- | Linear part of a neuron.
 evalNeuron :: Neuron ins -> V ins -> Scalar
-evalNeuron ws ins = peek ws + sum (pointwise (*) ins (pop ws))
+evalNeuron ws ins = sum (pointwise (*) (push 1 ins) ws)
 
--- Evaluate a layer.
+-- | Evaluate a layer.
 evalLayer :: Layer ins outs -> V ins -> V outs
 evalLayer l is = evalNorm (norm l) ((`evalNeuron` is) <$> neurons l)
 
--- Normalize final results.
+-- | Normalization functions.
 evalNorm :: Norm -> V n -> V n
 evalNorm fun ins =
   case fun of
@@ -50,7 +52,7 @@ evalNorm fun ins =
     Softmax -> softmax ins
     ReLU    -> relu <$> ins
 
--- Evaluate a network.
+-- | Evaluate a network.
 evalNet :: Net ins hs outs -> V ins -> V outs
 evalNet net =
   case net of
@@ -74,25 +76,23 @@ netG net0 is0 expected =
   layerG is l next = (wGradients :> newNext, igs)
     where
     os             = evalLayer l is
-    (newNext, igs) = go (norm l) os next
-    wGradients     = GLayer ((\x -> push x (x .* is)) <$> igs)
+    wGradients     = GLayer ((.* push 1 is) <$> igs)
 
+    (newNext, igs) =
+      case next of
+        Result -> (Result, pointwise delta os expected)
+          where
+          delta a e =
+            case norm l of
+              Sigmoid -> (a - e) * a * (1 - a)  -- Square Error Loss
+              Softmax -> a - e                  -- Cross Entropy Loss,
+                                                -- assuming `sum e == 1`
+              ReLU    -> if e < a then 1 else 0 -- Square Error Loss
 
-  go :: Norm -> V a -> Net a h outs -> (NetG a h outs, IGradient a)
-  go f is net =
-    case net of
-      Result -> (Result, pointwise delta is expected)
-        where
-        delta a e =
-          case f of
-            Sigmoid -> (a - e) * a * (1 - a)  -- Square Error Loss
-            Softmax -> a - e                  -- Cross Entropy Loss,
-                                              -- assuming `sum e == 1`
-            ReLU    -> ite (e <. a) 1 0       -- Square Error Loss
+        l' :> next' -> (newNet, updateIGradient l' (norm l) os igs')
+          where
+          (newNet, igs') = layerG os l' next'
 
-      l :> next -> (newNet, updateIGradient l f is igs)
-        where
-        (newNet, igs) = layerG is l next
 
 updateIGradient ::
   Layer ins outs                                              ->
@@ -110,7 +110,7 @@ updateIGradient l f is ogs =
     Sigmoid -> pointwise dSigmoid is  gradients
     Softmax -> pointwise dSoftmax is' gradients
   where
-  dReLU o xs        = ite (o <. 0) 0 (sum xs)
+  dReLU o xs        = if o < 0 then 0 else sum xs
   dSigmoid o xs     = sum xs * o * (1 - o)
 
   is'               = indexed is
@@ -121,6 +121,7 @@ updateIGradient l f is ogs =
       | i == j    = x * (1 - x)
       | otherwise = - x * y
 
+  -- The `pop` is to skip the weight of the bias input
   gradients = transpose (pointwise (\x y -> x .* pop y) ogs (neurons l))
 
 --------------------------------------------------------------------------------
@@ -132,11 +133,19 @@ updateLayer eta l lg =
   where
   updateWeight w g = w - eta * g
 
--- Assumes that `eta` has been divided by the number of samples that we
--- looked at.
-updateNet :: Scalar -> Net ins hs outs -> NetG ins hs outs -> Net ins hs outs
-updateNet eta net g =
-  case (net,g) of
-    (Result,Result)          -> Result
-    (l :> more, lg :> moreG) -> updateLayer eta l lg :> updateNet eta more moreG
+updateNet ::
+  Scalar -> Net ins hs outs -> Scalar -> NetG ins hs outs -> Net ins hs outs
+updateNet eta net0 samples g0
+  | samples == 0 = net0
+  | otherwise    = go net0 g0
+  where
+  eta' = eta / samples
+
+  go :: Net a h b -> NetG a h b -> Net a h b
+  go net g =
+    case (net,g) of
+      (Result,Result)          -> Result
+      (l :> more, lg :> moreG) -> updateLayer eta' l lg :> go more moreG
+
+
 
