@@ -1,5 +1,5 @@
 module LA
-  ( Vector, each, pointwise, (.*), sumV
+  ( Vector, each, pointwise, (.*), sumV, zeroV
   , push, pop, empty
   , Matrix, transpose, mPointwise, mApp, vToM, mRows, mCols
   , type Nat, type (+), KnownNat, natVal
@@ -16,7 +16,7 @@ import Scalar
 
 
 --------------------------------------------------------------------------------
--- Matrix
+-- Vector
 
 newtype Vector (n :: Nat) = Vector { unV :: V.Vector Scalar }
 
@@ -51,7 +51,8 @@ sumV :: Vector n -> Scalar
 sumV (Vector xs) = V.sum xs
 {-# INLINE sumV #-}
 
-
+zeroV :: forall n. KnownNat n => Vector n
+zeroV = Vector (V.replicate (knownInt (Proxy :: Proxy n)) 0)
 
 --------------------------------------------------------------------------------
 -- Matrix
@@ -117,10 +118,15 @@ mToList m0 = GV.unfoldr step (values m0)
 
 instance (KnownNat m, KnownNat n) => B.Binary (Matrix m n) where
   put m = V.mapM_ B.put (values m)
-  get   = do let r = natVal (Proxy :: Proxy m)
-                 c = natVal (Proxy :: Proxy n)
-                 s = fromIntegral (r * c)
+  get   = do let r = knownInt (Proxy :: Proxy m)
+                 c = knownInt (Proxy :: Proxy n)
+                 s = r * c
              guard (r > 0 && c > 0)
              vs <- V.replicateM s B.get
              pure Matrix { rows = fromIntegral r, values = vs }
+
+
+knownInt :: KnownNat n => f n -> Int
+knownInt = fromIntegral . natVal
+
 

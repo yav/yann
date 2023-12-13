@@ -15,10 +15,29 @@ extra-doc-files:    CHANGELOG.md
 -- extra-source-files:
 
 common warnings
-    ghc-options: -Wall
+    ghc-options: -Wall -ddump-simpl -dsuppress-all
+
+common exts
+  default-extensions:
+    GeneralizedNewtypeDeriving,
+    StandaloneDeriving,
+    MultiParamTypeClasses,
+    BlockArguments,
+    ImportQualifiedPost,
+    DataKinds,
+    KindSignatures,
+    ScopedTypeVariables,
+    TypeOperators,
+    TypeFamilies,
+    FlexibleContexts,
+    FlexibleInstances,
+    UndecidableInstances,
+    TypeData,
+
+
 
 library
-    import:           warnings
+    import: warnings, exts
     exposed-modules:
       LA,
       Scalar,
@@ -26,29 +45,6 @@ library
       Net,
 
     -- LANGUAGE extensions used by modules in this package.
-    default-extensions:
-      GeneralizedNewtypeDeriving,
-      DeriveFunctor,
-      DeriveTraversable,
-      DeriveTraversable,
-      StandaloneDeriving,
-      DerivingVia,
-      MultiParamTypeClasses,
-      BlockArguments,
-      ImportQualifiedPost,
-      DataKinds,
-      KindSignatures,
-      ScopedTypeVariables,
-      TypeOperators,
-      TypeFamilies,
-      GADTs,
-      ExistentialQuantification,
-      FlexibleContexts,
-      FlexibleInstances,
-      UndecidableInstances,
-      TypeSynonymInstances,
-      TypeData,
-
     build-depends:
       base,
       vector,
@@ -57,4 +53,14 @@ library
 
     hs-source-dirs:   src
     default-language: Haskell2010
+
+executable test-net
+  import: warnings, exts
+  hs-source-dirs: exe
+  main-is: Main.hs
+  build-depends:
+    base, binary, yann
+  default-language: Haskell2010
+
+
 
