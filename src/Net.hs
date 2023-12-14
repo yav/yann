@@ -1,17 +1,22 @@
 module Net
   ( Layers(..)
-  , Net(..)
+  , Net(..), NetG
   , evalNet
   , netG
+  , addG
+  , Zero(..)
   , updateNet
   , Norm(..)
+  , IsNet
   ) where
 
 import Data.Binary qualified as B
 import Data.Kind(Type)
 import Data.Proxy(Proxy(..))
+import Text.PrettyPrint.HughesPJClass qualified as P
 import LA
 import Act
+import Rng
 
 type data Layers = Size Nat Norm Layers
                  | Final
@@ -19,17 +24,22 @@ type data Layers = Size Nat Norm Layers
 data family Net :: Nat -> Layers -> Nat -> Type
 
 data instance Net n Final n          = Result
-data instance Net i (Size s n hs) o  = Layer i s :> Net s hs o
+data instance Net i (Size s n hs) o  = !(Layer i s) :> !(Net s hs o)
 
 type Layer i o                       = Matrix o (1 + i)
 type LayerG i o                      = Layer i o
 type NetG                            = Net
 
+type IsNet i l o = ( Layerwise i l o, EvalNet i l o, EvalSample i l o
+                   , Zero (Net i l o)
+                   , B.Binary (Net i l o)
+                   , Random (Net i l o)
+                   )
 --------------------------------------------------------------------------------
 -- Evaluation
 
 -- | Evaluate a layer.
-evalLayer :: EvalNorm n => f n -> Layer i o -> Vector i -> Vector o
+evalLayer :: NormFun n => f n -> Layer i o -> Vector i -> Vector o
 evalLayer n m is = evalNorm n (m `mApp` push 1 is)
 {-# Inline evalLayer #-}
 
@@ -41,14 +51,14 @@ instance (i ~ o) => EvalNet i Final o where
   evalNet _ = id
   {-# Inline evalNet #-}
 
-instance (EvalNorm n, EvalNet s hs o) => EvalNet i (Size s n hs) o where
+instance (NormFun n, EvalNet s hs o) => EvalNet i (Size s n hs) o where
   evalNet (m :> ms) = evalNet ms . evalLayer (Proxy :: Proxy n) m
   {-# Inline evalNet #-}
 
 --------------------------------------------------------------------------------
 -- Gradients
 
-class EvalExample i h o where
+class EvalSample i h o where
 
   -- | How the loss function changes for the given example,
   -- if we chnage the weights of the net.
@@ -59,14 +69,14 @@ class EvalExample i h o where
   --    2. How the loss changes if we change one of our
   --       *unnormalized* inputs inputs.
   nextNetG ::
-    EvalNorm n =>
+    NormFun n =>
     f n  {- ^ How our inputs were normalized -} ->
     Vector i ->
     Vector o ->
     Net i h o ->
     (NetG i h o, Vector i)
 
-instance (i ~ o) => EvalExample i Final o where
+instance (i ~ o) => EvalSample i Final o where
   netG _ _ _ = Result
   {-# Inline netG #-}
 
@@ -74,7 +84,7 @@ instance (i ~ o) => EvalExample i Final o where
     where delta = evalLossDeltaOutput norm
   {-# Inline nextNetG #-}
 
-instance (EvalNorm n, EvalExample s h o) => EvalExample i (Size s n h) o where
+instance (NormFun n, EvalSample s h o) => EvalSample i (Size s n h) o where
   netG (l :> ls) ins expected = fst (layerG expected ins l ls)
   {-# Inline netG #-}
 
@@ -85,7 +95,7 @@ instance (EvalNorm n, EvalExample s h o) => EvalExample i (Size s n h) o where
 
 layerG ::
   forall n i s h os.
-  (EvalNorm n, EvalExample s h os) =>
+  (NormFun n, EvalSample s h os) =>
   Vector os -> Vector i -> Layer i s -> Net s h os ->
   (NetG i (Size s n h) os, Vector s)
 layerG expected is l next = (wGradients :> nextG, igs)
@@ -98,7 +108,7 @@ layerG expected is l next = (wGradients :> nextG, igs)
 
 
 updateIGradient ::
-  EvalNorm norm =>
+  NormFun norm =>
   f norm      {- ^ How our inputs were normalized -} ->
   Layer i o   {- ^ The layer we are going across  -} ->
   Vector i    {- ^ *Normalized* inputs to this layer -} ->
@@ -109,33 +119,50 @@ updateIGradient ::
                    (i.e., the derivative of the previous normalization
                    function is included). -}
 updateIGradient f l is ogs =
-  pointwise (evalLossDeltaLayer f) is (pop (transpose l `mApp` ogs))
+  pointwise (evalLossDeltaLayer f) is (pop (l `mAppT` ogs))
 {-# Inline updateIGradient #-}
 
 --------------------------------------------------------------------------------
 -- Updating the weights
 
+class Layerwise i h o where
+  layerwise ::
+    (forall x y . Layer x y-> Layer x y-> Layer x y) ->
+    Net i h o -> Net i h o -> Net i h o
+
+instance (i ~ o) => Layerwise i Final o where
+  layerwise _ _ _ = Result
+
+instance Layerwise s ls o => Layerwise i (Size s n ls) o where
+  layerwise f (l :> ls) (r :> rs) = f l r :> layerwise f ls rs
+
+-- | Update a network based on the given cumulative gradient.
+updateNet ::
+  Layerwise i h o =>
+  Scalar        {- ^ Learning rate -} ->
+  Int           {- ^ Number of samples in the gradient -} ->
+  Net i h o     {- ^ Original weights -} ->
+  NetG i h o    {- ^ Cumulative gradient -} ->
+  Net i h o     {- ^ Updated netwoek -}
+updateNet eta samples n g
+  | samples == 0 = n
+  | otherwise    = layerwise (updateLayer (eta / fromIntegral samples)) n g
+
 updateLayer :: Scalar -> Layer i o -> LayerG i o -> Layer i o
 updateLayer eta = mPointwise \w g -> w - eta * g
 {-# Inline updateLayer #-}
 
-class UpdateNet i h o where
-  updateNet' :: Scalar -> Net i h o -> NetG i h o -> Net i h o
+instance (i ~ o) => Zero (Net i Final o) where
+  zero = Result
 
-instance (i ~ o) => UpdateNet i Final o where
-  updateNet' _ h _ = h
-  {-# Inline updateNet' #-}
+instance (Zero (Net s ls o), KnownNat (1+i), KnownNat s)  =>
+  Zero (Net i (Size s n ls) o) where
+  zero = zero :> zero
 
-instance UpdateNet s ls o => UpdateNet i (Size s n ls) o where
-  updateNet' eta (m :> ms) (g :> gs) =
-    updateLayer eta m g :> updateNet' eta ms gs
-  {-# Inline updateNet' #-}
+-- | Add two gradients.
+addG :: Layerwise i l o => Net i l o -> NetG i l o -> NetG i l o
+addG = layerwise (mPointwise (+))
 
-updateNet ::
-  UpdateNet i h o => Scalar -> Int -> Net i h o -> NetG i h o -> Net i h o
-updateNet eta samples n g
-  | samples == 0 = n
-  | otherwise    = updateNet' (eta / fromIntegral samples) n g
 
 --------------------------------------------------------------------------------
 -- Save & Load
@@ -148,4 +175,29 @@ instance (KnownNat (1+i), KnownNat s, B.Binary (Net s ls o)) =>
   B.Binary (Net i (Size s n ls) o) where
   put (l :> ls) = B.put l >> B.put ls
   get           = (:>) <$> B.get <*> B.get
+
+--------------------------------------------------------------------------------
+-- Random
+
+instance (is ~ os) => Random (Net is Final os) where
+  random = pure Result
+
+instance (KnownNat (1+i), KnownNat s, Random (Net s ls o)) =>
+  Random (Net i (Size s n ls) o) where
+  random = (:>) <$> random <*> random
+
+
+--------------------------------------------------------------------------------
+-- Show & Pretty
+
+instance (i ~ o) => P.Pretty (Net i Final o) where
+  pPrint _ = P.text (replicate 80 '=')
+
+instance (KnownNat s, P.Pretty (Net s ls o)) =>
+  P.Pretty (Net i (Size s n ls) o) where
+  pPrint (l :> ls) = P.pPrint l P.$$ P.text (replicate 80 '-') P.$$ P.pPrint ls
+
+
+
+
 
