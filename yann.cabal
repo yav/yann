@@ -49,6 +49,7 @@ library
       Act,
       Net,
       Train,
+      Sample,
       Rng
 
     -- LANGUAGE extensions used by modules in this package.
@@ -68,7 +69,9 @@ executable test-net
   hs-source-dirs: exe
   main-is: Main.hs
   build-depends:
-    base, binary, yann, pretty, vector
+    base, binary, yann, pretty, vector,
+    ansi-terminal
+
   default-language: Haskell2010
 
 

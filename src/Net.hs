@@ -17,6 +17,7 @@ import Text.PrettyPrint.HughesPJClass qualified as P
 import LA
 import Act
 import Rng
+import Sample
 
 type data Layers = Size Nat Norm Layers
                  | Final
@@ -62,7 +63,7 @@ class EvalSample i h o where
 
   -- | How the loss function changes for the given example,
   -- if we chnage the weights of the net.
-  netG  :: Net i h o -> Vector i -> Vector o -> NetG i h o
+  netG  :: Net i h o -> Sample i o -> NetG i h o
 
   -- | Two gardients:
   --    1. First one is as above (change wrt weights).
@@ -77,7 +78,7 @@ class EvalSample i h o where
     (NetG i h o, Vector i)
 
 instance (i ~ o) => EvalSample i Final o where
-  netG _ _ _ = Result
+  netG _ _ = Result
   {-# Inline netG #-}
 
   nextNetG norm os expected _ = (Result, pointwise delta os expected)
@@ -85,7 +86,7 @@ instance (i ~ o) => EvalSample i Final o where
   {-# Inline nextNetG #-}
 
 instance (NormFun n, EvalSample s h o) => EvalSample i (Size s n h) o where
-  netG (l :> ls) ins expected = fst (layerG expected ins l ls)
+  netG (l :> ls) s = fst (layerG (sampleOutput s) (sampleInput s) l ls)
   {-# Inline netG #-}
 
   nextNetG norm os expected (l :> next) = (nextG, updateIGradient norm l os igs)

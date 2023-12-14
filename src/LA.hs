@@ -2,6 +2,7 @@ module LA
   ( Vector, each, pointwise, (.*), sumV
   , vFromList, vOneAt, vConcat
   , push, pop, empty
+  , vIndex
   , Matrix, mPointwise, mApp, mAppT, vToM
   , type Nat, type (+), KnownNat, natVal
   , Scalar
@@ -112,7 +113,8 @@ vToM :: Vector m -> (Scalar -> Vector n) -> Matrix m n
 vToM (Vector xs) f = Matrix { values = V.concatMap (unV . f) xs }
 {-# INLINE vToM #-}
 
-
+vIndex :: Vector n -> Int -> Scalar
+vIndex (Vector xs) i = xs V.! i
 
 mToList :: forall m n. KnownNat m => Matrix m n -> BV.Vector (Vector n)
 mToList m0 = BV.unfoldr step (values m0)

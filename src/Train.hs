@@ -7,10 +7,12 @@ import Control.Monad(foldM)
 import LA
 import Net
 import Rng
+import Sample
 
 import Debug.Trace
 
-type Samples i o = V.Vector (Vector i, Vector o)
+type Samples i o = V.Vector (Sample i o)
+
 
 simpleTrain ::
   IsNet i l o =>
@@ -21,7 +23,10 @@ simpleTrain ::
   RngM (Net i l o)
 simpleTrain samples batch n net = foldM (doEpoch samples batch) net rates
   where
-  rates = take n (zip [1..] (iterate (* 0.9999) 0.1))
+  start = 0.1
+  end   = 0.001
+  step  = end ** (1/fromIntegral n)
+  rates = take n (zip [1..] (iterate (* step) start))
   -- There are better methods to adapt the learning rate parameter:
   -- Adagrad: use separate learning rates for each dimension.
   -- Adadelta: https://arxiv.org/pdf/1212.5701v1.pdf
@@ -34,7 +39,7 @@ doEpoch ::
   (Int,Scalar)            {- ^ Learning Rate -} ->
   RngM (Net i l o)     {- ^ Updated net -}
 doEpoch samples batch net0 (name,eta) =
-  do traceM ("Epoch " ++ show name)
+  do traceM ("Epoch " ++ show name ++ " rate = " ++ show eta)
      order <- randPerm (V.length samples)
      case U.foldl' step (net0, zero, batch) order of
        (net1, grad, todo) -> pure (updateNet eta (batch - todo) net1 grad)
@@ -50,8 +55,6 @@ doEpoch samples batch net0 (name,eta) =
 
 doOne ::
   IsNet i l o => Net i l o -> Samples i o -> NetG i l o -> Int -> NetG i l o
-doOne net samples grad i =
-  case samples V.! i of
-    (inp,out) -> let g  = netG net inp out
-                 in g `par` addG grad g
+doOne net samples grad i = netG net (samples V.! i)
+  where g = addG grad grad
 {-# Inline doOne #-}

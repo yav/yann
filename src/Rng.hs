@@ -1,10 +1,13 @@
 module Rng
-  (Random(..), RngM, runRngM, runBigSeedRngM, runSmallSeedRngM,randPerm)
+  ( Random(..), RngM, runRngM, runBigSeedRngM, runSmallSeedRngM
+  , randPerm, shuffle
+  )
   where
 
 import Control.Monad(liftM,ap)
 import Control.Monad.ST.Strict
 import Data.Word
+import Data.Vector qualified as BV
 import Data.Vector.Unboxed qualified as V
 import Data.Vector.Unboxed.Mutable qualified as MV
 import System.Random.TF
@@ -37,6 +40,12 @@ class Random a where
 
 instance Random Word64 where
   random = RngM R.random
+
+shuffle :: BV.Vector a -> RngM (BV.Vector a)
+shuffle xs =
+  do let n = BV.length xs
+     perm <- randPerm n
+     pure (BV.generate n \i -> xs BV.! (perm V.! i))
 
 randPerm :: Int -> RngM (V.Vector Int)
 randPerm n =
