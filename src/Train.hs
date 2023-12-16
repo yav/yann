@@ -55,6 +55,6 @@ doEpoch samples batch net0 (name,eta) =
 
 doOne ::
   IsNet i l o => Net i l o -> Samples i o -> NetG i l o -> Int -> NetG i l o
-doOne net samples grad i = netG net (samples V.! i)
-  where g = addG grad grad
+doOne net samples grad i = g `par` addG grad g
+  where g = netG net (samples V.! i)
 {-# Inline doOne #-}
